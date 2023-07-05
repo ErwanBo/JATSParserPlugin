@@ -1,0 +1,33 @@
+
+/* Override Default theme style */
+.pkp_structure_main:before, .pkp_structure_main:after {
+	display: none;
+}
+
+@media (min-width: 1200px) {
+
+	.pkp_structure_main {
+		width: initial;
+	}
+
+	.pkp_structure_content {
+		width: initial;
+	}
+}
+
+@media (min-width: 992px) {
+	.pkp_structure_main {
+		width: initial;
+		float: none;
+	}
+}
+
+.pkp_structure_sidebar {
+	float: none;
+}
+
+figure {
+	margin-left: 0;
+	margin-right: 0;
+}
+
