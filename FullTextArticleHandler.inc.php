@@ -1,6 +1,7 @@
 <?php
 
-import('pages.article.ArticleHandler');
+use APP\pages\article\ArticleHandler;
+use APP\facades\Repo;
 
 class FullTextArticleHandler extends ArticleHandler {
 
@@ -34,15 +35,18 @@ class FullTextArticleHandler extends ArticleHandler {
 		if (empty($fullTextFileIds)) $dispatcher->handle404();
 
 		// Find if the file is an image dependent from the XML file, from which full-text was generated.
-		$dependentFilesIterator = Services::get('submissionFile')->getMany([
-			'assocTypes' => [ASSOC_TYPE_SUBMISSION_FILE],
-			'assocIds' => array_values($fullTextFileIds),
-			'submissionIds' => [$this->article->getId()],
-			'fileStages' => [SUBMISSION_FILE_DEPENDENT],
-			'includeDependentFiles' => true,
-		]);
+		$dependentFilesIterator = Repo::submissionFile()
+			->getCollector()
+			->filterByAssoc(
+				Application::ASSOC_TYPE_SUBMISSION_FILE,
+				array_values($fullTextFileIds)
+			)
+            ->filterBySubmissionIds([$this->article->getId()])
+			->filterByFileStages([SubmissionFile::SUBMISSION_FILE_DEPENDENT])
+			->includeDependentFiles()
+			->getMany();
 
-		if (is_null($dependentFilesIterator->current())) $dispatcher->handler404();
+		if (is_null($dependentFilesIterator->first())) $dispatcher->handler404();
 
 		$submissionFile = null;
 		foreach ($dependentFilesIterator as $dependentFile) {

@@ -29,7 +29,7 @@ msgstr "Налаштування JATS парсера"
 msgid "plugins.generic.jatsParser.settings.description"
 msgstr "Форма налаштувань для плагіна JATSParser"
 
-msgid "plugins.generic.jatsParser.settings.covert.pdf"
+msgid "plugins.generic.jatsParser.settings.convert.pdf"
 msgstr "Активувати перетворення JATS XML в PDF"
 
 msgid "plugins.generic.jatsParser.galley.import"

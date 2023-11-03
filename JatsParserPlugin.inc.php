@@ -18,6 +18,13 @@ import('plugins.generic.jatsParser.classes.components.forms.PublicationJATSUploa
 import('lib.pkp.classes.citation.Citation');
 import('lib.pkp.classes.file.PrivateFileManager');
 
+use APP\core\Application;
+use APP\core\Request;
+use PKP\core\JSONMessage;
+use PKP\galley\Galley;
+use APP\facades\Repo;
+use PKP\facades\Locale;
+use PKP\i18n\LocaleMetadata;
 use JATSParser\Body\Document;
 use JATSParser\PDF\TCPDFDocument;
 use JATSParser\HTML\Document as HTMLDocument;
@@ -93,7 +100,6 @@ class JatsParserPlugin extends GenericPlugin {
 		switch ($request->getUserVar('verb')) {
 			case 'settings':
 				$context = $request->getContext();
-				AppLocale::requireComponents(LOCALE_COMPONENT_APP_COMMON,  LOCALE_COMPONENT_PKP_MANAGER);
 				$this->import('JatsParserSettingsForm');
 				$form = new JatsParserSettingsForm($this, $context->getId());
 				if ($request->getUserVar('save')) {
@@ -121,9 +127,8 @@ class JatsParserPlugin extends GenericPlugin {
 	{
 		// HTML preparation
 		$context = $request->getContext(); /* @var $context Journal */
-		$submission = Services::get('submission')->get($publication->getData('submissionId')); /* @var $submission Submission */
-		$issueDao = DAORegistry::getDAO('IssueDAO');
-		$issue = $issueDao->getBySubmissionId($submission->getId(), $context->getId());
+		$submission = Repo::submission()->get($publication->getData('submissionId')); /* @var $submission Submission */
+		$issue = Repo::issue()->getBySubmissionId($submission->getId());
 
 		//$this->imageUrlReplacement($xmlGalley, $xpath);
 		//$this->ojsCitationsExtraction($article, $templateMgr, $htmlDocument, $request);
@@ -144,8 +149,9 @@ class JatsParserPlugin extends GenericPlugin {
 		}
 
 		$pdfDocument->SetCreator(PDF_CREATOR);
-		$userGroupDao = DAORegistry::getDAO('UserGroupDAO'); /* @var $userGroupDao UserGroupDAO */
-		$userGroups = $userGroupDao->getByContextId($context->getId())->toArray();
+        $userGroups = Repo::userGroup()->getCollector()
+            ->filterByContextIds([$context->getId()])
+            ->getMany();
 		$pdfDocument->SetAuthor($publication->getAuthorString($userGroups));
 		$pdfDocument->SetSubject($publication->getLocalizedData('subject', $localeKey));
 
@@ -323,7 +329,6 @@ class JatsParserPlugin extends GenericPlugin {
 		/**
 		 * @var $templateMgr TemplateManager
 		 * @var $submission Submission
-		 * @var $submissionFileDao SubmissionFileDAO
 		 * @var $submissionFile SubmissionFile
 		 */
 		$templateMgr = $args[1];
@@ -334,15 +339,16 @@ class JatsParserPlugin extends GenericPlugin {
 		$latestPublicationApiUrl = $request->getDispatcher()->url($request, ROUTE_API, $context->getData('urlPath'), 'submissions/' . $submission->getId() . '/publications/' . $latestPublication->getId());
 
 		$supportedSubmissionLocales = $context->getSupportedSubmissionLocales();
-		$localeNames = AppLocale::getAllLocales();
+		$localeNames = Locale::getFormattedDisplayNames(null, null, LocaleMetadata::LANGUAGE_LOCALE_ONLY);
 		$locales = array_map(function($localeKey) use ($localeNames) {
 			return ['key' => $localeKey, 'label' => $localeNames[$localeKey]];
 		}, $supportedSubmissionLocales);
 
-		$submissionFiles = Services::get('submissionFile')->getMany([
-			'submissionIds' => [$submission->getId()],
-			'fileStages' => [SUBMISSION_FILE_PRODUCTION_READY],
-		]);
+		$submissionFiles = Repo::submissionFile()
+			->getCollector()
+			->filterBySubmissionIds([$submission->getId()])
+			->filterByFileStages([SubmissionFile::SUBMISSION_FILE_PRODUCTION_READY])
+			->getMany();
 
 		$submissionFilesXML = array();
 		foreach ($submissionFiles as $submissionFile) {
@@ -352,7 +358,7 @@ class JatsParserPlugin extends GenericPlugin {
 		}
 
 		$dispatcher = $request->getDispatcher();
-		$submissionProps = Services::get('submission')->getProperties($submission, array('stageId'), array('request' => $request));
+        $submissionProps = Repo::submission()->getSchemaMap()->summarizeWithoutPublication($submission);
 		$currentPath = $dispatcher->url($request, ROUTE_PAGE, null, 'workflow', 'fullTextPreview', $submission->getId(), $submissionProps);
 		if (!empty($submissionFiles)) {
 			$msg = $templateMgr->smartyTranslate(array(
@@ -411,7 +417,7 @@ class JatsParserPlugin extends GenericPlugin {
 				$newPublication->setData('jatsParser::fullTextFileId', null, $localeKey);
 				continue;
 			}
-			$submissionFile = Services::get('submissionFile')->get($fileId);
+			$submissionFile = Repo::submissionFile()->get($fileId);
 			$htmlDocument = $this->getFullTextFromJats($submissionFile);
 			$newPublication->setData('jatsParser::fullText', $htmlDocument->saveAsHTML(), $localeKey);
 		}
@@ -433,7 +439,7 @@ class JatsParserPlugin extends GenericPlugin {
 		$fileId = $params['jatsParser::references'];
 		if (!$fileId) return false;
 
-		$submissionFile = Services::get('submissionFile')->get($fileId);
+		$submissionFile = Repo::submissionFile()->get($fileId);
 		$htmlDocument = $this->getFullTextFromJats($submissionFile);
 
 		$request = $this->getRequest();
@@ -450,11 +456,11 @@ class JatsParserPlugin extends GenericPlugin {
 		return false;
 	}
 
-	/**   --------EXPERIMENTAL--------
+	/**   --------OPUS--------
 	 * @param string $hookname
 	 * @param array $args
-	 * @return bool
-	 * @brief modify dates properties based on parsed dates from JATS XML
+	 * @return false
+	 * @brief Updates submission, decision, and publication dates from JATS file data for a given publication.
 	 */
 	function editPublicationDates(string $hookname, array $args) {
 		$newPublication = $args[0];
@@ -464,44 +470,59 @@ class JatsParserPlugin extends GenericPlugin {
 		$fileId = $params['jatsParser::dates'];
 		if (!$fileId) return false;
 
-		$submissionFile = Services::get('submissionFile')->get($fileId);
+		$submissionFile = Repo::submissionFile()->get($fileId);
 		$datesDocument = $this->getDatesFromJats($submissionFile);
-
+		error_log("===========================");
+		error_log(var_export($datesDocument,true));
 		$request = $this->getRequest();
 		$context = $request->getContext();
 
 		// Update submission date
-		$submission = Services::get('submission')->get($newPublication->getData('submissionId'));
+		$submission = Repo::submission()->get($newPublication->getData('submissionId'));
 		$submission->setData('dateSubmitted', $datesDocument['received']);
 		$params = [
 			'date_submitted' => $datesDocument['received'],
 		];
-		Services::get('submission')->edit($submission, $params, $request);
-
+		error_log("-0-");
+		error_log(var_export($submissionFile->getAllData(),true));
+		error_log("-1-");
+		error_log(var_export($submission->getAllData(),true));
+		Repo::submission()->edit($submission, $params);
+		error_log(var_export($submission->getAllData(),true));
+		
 		// Update decision date
-		$editDecisionDao = DAORegistry::getDAO('EditDecisionDAO');
-		$editorDecisions = $editDecisionDao->getEditorDecisions($submission->getId(), 3);
-		if (!empty($editorDecisions)) {
-			$editorDecision = $editorDecisions[0];
-			$editorDecision['dateDecided'] = $datesDocument['accepted'];
-			$editDecisionDao->update(
-				'UPDATE edit_decisions SET date_decided = ? WHERE submission_id = ? AND stage_id = ?',
-				[$datesDocument['accepted'], $submission->getId(), 3]
-			);
+		$editorDecisions = Repo::decision()->getCollector()
+			->filterBySubmissionIds([$submission->getId()])
+			->filterByStageIds([WORKFLOW_STAGE_ID_EXTERNAL_REVIEW])
+			->getMany();
+
+		if (!empty($editorDecisions) && array_key_exists('accepted', $datesDocument)) {
+			$editorDecision = $editorDecisions->first();
+			error_log("-2-");
+			error_log(var_export($editorDecision->getAllData(),true));
+			$editorDecision->setData('dateDecided', $datesDocument['accepted']);
+			error_log(var_export($editorDecision->getAllData(),true));
+			
 		}
 
-		
 		// Update publication date
 		$newPublication->setData('datePublished', $datesDocument['pub']);
 		$params = [
 			'date_published' => $datesDocument['pub'],
 		];
-		Services::get('publication')->edit($newPublication, $params, $request);
+		error_log("-3-");
+		error_log(var_export($newPublication->getAllData(),true));
+		Repo::publication()->edit($newPublication, $params);
+		error_log(var_export($newPublication->getAllData(),true));
 
+		error_log("===========================");
 		return false;
 	}
 
-	/**   --------EXPERIMENTAL--------
+	/**   --------OPUS--------
+	 * @param SubmissionFile $submissionFile The submission file object, expected to be a JATS XML document.
+	 * @return array Associative array containing 'pub', 'received', and 'accepted' dates (if available) from the JATS file, formatted in ISO 8601 standard.
+	 * @brief Extracts significant publication dates from a JATS XML document.
 	 */
 	public function getDatesFromJats(SubmissionFile $submissionFile) {
 		import('lib.pkp.classes.file.PrivateFileManager');
@@ -544,8 +565,6 @@ class JatsParserPlugin extends GenericPlugin {
 		if (!array_key_exists('jatsParser::pdfGalley', $params)) return false;
 		if (!$this->getSetting($request->getContext()->getId(), 'convertToPdf')) return false;
 
-		$articleGalleyDao = DAORegistry::getDAO('ArticleGalleyDAO'); /* @var $articleGalleyDao ArticleGalleyDAO */
-
 		$localePare = $params['jatsParser::pdfGalley'];
 		foreach ($localePare as $localeKey => $createPdf) {
 			$fullText = $newPublication->getData('jatsParser::fullText', $localeKey);
@@ -554,14 +573,16 @@ class JatsParserPlugin extends GenericPlugin {
 
 			// Set real path to images, attached to the original JATS XML file
 			$jatsFileId = $newPublication->getData('jatsParser::fullTextFileId', $localeKey);
-			$jatsSubmissionFile = Services::get('submissionFile')->get($jatsFileId);
+
+			$jatsSubmissionFile = Repo::submissionFile()->get($jatsFileId);
+
 			if ($jatsSubmissionFile) {
 				$fullText = $this->_setSupplImgPath($jatsSubmissionFile, $fullText);
 			}
 
 			// Add required locale components
-			AppLocale::requireComponents(LOCALE_COMPONENT_PKP_SUBMISSION, $localeKey);
-			AppLocale::registerLocaleFile($localeKey, 'plugins/pubIds/doi/locale/' . $localeKey . '/locale.po');
+			//AppLocale::requireComponents(LOCALE_COMPONENT_PKP_SUBMISSION, $localeKey);
+			//AppLocale::registerLocaleFile($localeKey, 'plugins/pubIds/doi/locale/' . $localeKey . '/locale.po');
 
 			// Set references
 			$fullText = $this->_setReferences($newPublication, $localeKey, $fullText);
@@ -571,17 +592,17 @@ class JatsParserPlugin extends GenericPlugin {
 
 			// Create a PDF Galley
 			$galleyId = $this->createGalley($localeKey, $newPublication);
-			$galley = $articleGalleyDao->getByBestGalleyId($galleyId, $newPublication->getId());
+			$galley = Repo::galley()->getByBestId($galleyId, $newPublication);
 
 			// Create associated submission file and update the galley
 			$submissionFile = $this->_setPdfSubmissionFile($pdf, $newPublication, $galley);
 			if ($submissionFile) {
 				$galley->setData('fileId', $submissionFile->getData('fileId'));
-				$articleGalleyDao->updateObject($galley);
+				Repo::galley()->edit($galley, []);
 			}
 			// remove galley if submission file is missing
 			else {
-				$articleGalleyDao->deleteObject($galley);
+				Repo::galley()->delete($galley);
 			}
 		}
 
@@ -595,12 +616,11 @@ class JatsParserPlugin extends GenericPlugin {
 	 * @brief create an empty galley
 	 */
 	function createGalley(string $galleyLocale, Publication $publication): int {
-		$articleGalleyDao = DAORegistry::getDAO('ArticleGalleyDAO'); /* @var $articleGalleyDao ArticleGalleyDAO */
-		$articleGalley = $articleGalleyDao->newDataObject();
-		$articleGalley->setLocale($galleyLocale);
+		$articleGalley = Repo::galley()->newDataObject();
+		$articleGalley->setlocale($galleyLocale);
 		$articleGalley->setData('publicationId', $publication->getId());
 		$articleGalley->setLabel(__('plugins.generic.jatsParser.publication.galley.pdf.label'));
-		return $articleGalleyDao->insertObject($articleGalley);
+		return Repo::galley()->add($articleGalley);
 	}
 
 	/**
@@ -608,8 +628,8 @@ class JatsParserPlugin extends GenericPlugin {
 	 * @param Publication $publication publication associated with a submission file
 	 * @brief creates a new PDF submission file
 	 */
-	private function _setPdfSubmissionFile(string $pdfBinaryString, Publication $publication, ArticleGalley $galley) {
-		$submission = Services::get('submission')->get($publication->getData('submissionId')); /* @var $submission Submission */
+	private function _setPdfSubmissionFile(string $pdfBinaryString, Publication $publication, Galley $galley) {
+		$submission = Repo::submission()->get($publication->getData('submissionId')); /* @var $submission Submission */
 		$request = $this->getRequest();
 
 		// Create a temporary file
@@ -617,8 +637,7 @@ class JatsParserPlugin extends GenericPlugin {
 		file_put_contents($tmpFile, $pdfBinaryString);
 
 		// Set main Submission File data
-		$submissionFileDao = DAORegistry::getDAO('SubmissionFileDAO'); /* @var $submissionFileDao SubmissionFileDAO */
-		$submissionDir = Services::get('submissionFile')->getSubmissionDir($submission->getData('contextId'), $submission->getId());
+		$submissionDir = Repo::submissionFile()->getSubmissionDir($submission->getData('contextId'), $submission->getId());
 		$fileId = Services::get('file')->add(
 			$tmpFile,
 			$submissionDir . DIRECTORY_SEPARATOR . uniqid() . '.pdf'
@@ -626,8 +645,8 @@ class JatsParserPlugin extends GenericPlugin {
 
 		// Set original filename, get it from the JATS XML file
 		$jatsFileId = $publication->getData('jatsParser::fullTextFileId', $galley->getLocale());
-		$jatsFile = Services::get('submissionFile')->get($jatsFileId);
-
+		$jatsFile = Repo::submissionFile()->get($jatsFileId);
+		
 		$name = [];
 		foreach ($jatsFile->getData('name') as $locale => $sourceName) {
 			$name[$locale] = pathinfo($sourceName)['filename'] . '.pdf';
@@ -636,21 +655,19 @@ class JatsParserPlugin extends GenericPlugin {
 		// Finally transfer data to PDF galley
 		$genreDAO = DAORegistry::getDAO('GenreDAO');
 		$genre = $genreDAO->getByKey('SUBMISSION', $submission->getData('contextId'));
-		$submissionFile = $submissionFileDao->newDataObject();
-		$submissionFile->setAllData(
-			[
-				'fileId' => $fileId,
-				'assocType' => ASSOC_TYPE_GALLEY,
-				'assocId' => $galley->getId(),
-				'fileStage' => SUBMISSION_FILE_PROOF,
-				'mimetype' => 'application/pdf',
-				'locale' => $galley->getData('locale'),
-				'genreId' => $genre->getId(),
-				'name' => $name,
-				'submissionId' => $submission->getId(),
-			]);
-		$submissionFile = Services::get('submissionFile')->add($submissionFile, $request);
-
+		$submissionFile = Repo::submissionFile()->newDataObject([
+			'fileId' => $fileId,
+			'assocType' => ASSOC_TYPE_GALLEY,
+			'assocId' => $galley->getId(),
+			'fileStage' => SUBMISSION_FILE_PROOF,
+			'mimetype' => 'application/pdf',
+			'locale' => $galley->getData('locale'),
+			'genreId' => $genre->getId(),
+			'name' => $name,
+			'submissionId' => $submission->getId(),
+		]);
+		$submissionFileId = Repo::submissionFile()->add($submissionFile);
+		$submissionFile = Repo::submissionFile()->get($submissionFileId);
 		unlink($tmpFile); // remove temporary file
 		return $submissionFile;
 	}
@@ -769,16 +786,17 @@ class JatsParserPlugin extends GenericPlugin {
 
 		$request = $this->getRequest();
 		$html = null;
+        $context = $request->getContext();
 
 		if (empty($fullTexts)) return false;
-		$currentLocale = AppLocale::getLocale();
+		$currentLocale = Locale::getLocale();
 		if (array_key_exists($currentLocale, $fullTexts)) {
 			$html = $fullTexts[$currentLocale];
 
 			$submissionFileId = $publication->getData('jatsParser::fullTextFileId', $currentLocale);
-			$submissionFile = Services::get('submissionFile')->get($submissionFileId);
+			$submissionFile = Repo::submissionFile()->get($submissionFileId);
 		} else {
-			$locales = AppLocale::getAllLocales();
+			$locales = $this->getSupportedFormLocales($context);
 			$msg = __('plugins.generic.jatsParser.article.fulltext.availableLocale');
 			if (count($fullTexts) > 1) {
 				$msg = __('plugins.generic.jatsParser.article.fulltext.availableLocales');
@@ -815,19 +833,23 @@ class JatsParserPlugin extends GenericPlugin {
 	 * @brief Substitute path to attached images for full-text HTML
 	 */
 	function _setSupplImgPath(SubmissionFile $submissionFile, string $htmlString): string {
-		$dependentFilesIterator = Services::get('submissionFile')->getMany([
-			'assocTypes' => [ASSOC_TYPE_SUBMISSION_FILE],
-			'assocIds' => [$submissionFile->getId()],
-			'submissionIds' => [$submissionFile->getData('submissionId')],
-			'fileStages' => [SUBMISSION_FILE_DEPENDENT],
-			'includeDependentFiles' => true,
-		]);
+		///-------------------------------------------------///
+		$dependentFiles = Repo::submissionFile()
+			->getCollector()
+			->filterByAssoc(
+				Application::ASSOC_TYPE_SUBMISSION_FILE,
+				[$submissionFile->getId()]
+			)
+            ->filterBySubmissionIds([$submissionFile->getData('submissionId')])
+			->filterByFileStages([SubmissionFile::SUBMISSION_FILE_DEPENDENT])
+			->includeDependentFiles()
+			->getMany();
 		$request = $this->getRequest();
 		$imageFiles = [];
 
 		$privateFileManager = new PrivateFileManager();
 		$genreDao = DAORegistry::getDAO('GenreDAO');
-		foreach ($dependentFilesIterator as $dependentFile) {
+		foreach ($dependentFiles as $dependentFile) {
 			$genre = $genreDao->getById($dependentFile->getData('genreId'));
 			if ($genre->getCategory() !== GENRE_CATEGORY_ARTWORK) continue; // only art works are supported
 			if (!in_array($dependentFile->getData('mimetype'), self::getSupportedSupplFileTypes())) continue; // check if MIME type is supported
@@ -955,22 +977,18 @@ class JatsParserPlugin extends GenericPlugin {
 
 	/**
 	 * @return void
-	 * @brief iterate through all submissions and add full-text from  galleys
+	 * @brief iterate through all submissions and add full-text from galleys
 	 */
 	public function importGalleys() {
-		$submissionFileDao = DAORegistry::getDAO('SubmissionFileDAO'); /* @var $submissionFileDao SubmissionFileDAO */
 		$request = $this->getRequest();
 		$context = $request->getContext();
 		$user = $request->getUser();
-		$publicationDao = DAORegistry::getDAO('PublicationDAO');
 		$fileManager = new PrivateFileManager();
 
-		$submissions = Services::get('submission')->getMany([
-			'contextId' => $context->getId(),
-			'stageIds' => [
-				WORKFLOW_STAGE_ID_PRODUCTION
-			]
-		]);
+        $submissions = Repo::submission()->getCollector()
+            ->filterByContextIds([$context->getId()])
+            ->filterByStageIds([WORKFLOW_STAGE_ID_PRODUCTION])
+            ->getMany();
 
 		foreach ($submissions as $submission) {
 			$publication = $submission->getCurrentPublication();
@@ -991,14 +1009,13 @@ class JatsParserPlugin extends GenericPlugin {
 				if (empty($document->getArticleSections())) continue;
 
 				// Copy galley as a production ready submission file
-				$submissionDir = Services::get('submissionFile')->getSubmissionDir($request->getContext()->getId(), $submission->getId());
+				$submissionDir = Repo::submissionFile()->getSubmissionDir($request->getContext()->getId(), $submission->getId());
 				$fileId = Services::get('file')->add(
 					$fileManager->getBasePath() . DIRECTORY_SEPARATOR . $submissionFile->getData('path'),
 					$submissionDir . '/' . uniqid() . '.xml'
 				);
 
-				$newSubmissionFile = $submissionFileDao->newDataObject();
-				$newSubmissionFile->setAllData(
+				$newSubmissionFile = Repo::submissionFile()->newDataObject(
 					[
 						'fileId' => $fileId,
 						'uploaderUserId' => $user->getId(),
@@ -1008,18 +1025,17 @@ class JatsParserPlugin extends GenericPlugin {
 						'name' => $submissionFile->getData('name'),
 					],
 				);
-				$newSubmissionFile = Services::get('submissionFile')->add($newSubmissionFile, $request);
+				Repo::submissionFile()->add($newSubmissionFile);
 
 				// copy and attach dependent files, only images are supported
-				$assocFiles = Services::get('submissionFile')->getMany(
-					[
-						'assocTypes' => [ASSOC_TYPE_SUBMISSION_FILE],
-						'assocIds' => [$submissionFile->getId()],
-						'submissionIds' => [$submission->getId()],
-						'fileStages' => [SUBMISSION_FILE_DEPENDENT],
-						'includeDependentFiles' => true,
-					]
-				);
+
+				$assocFiles = Repo::submissionFile()->getCollector()
+					->filterByAssoc(Application::ASSOC_TYPE_SUBMISSION_FILE, [$submission->getId()])
+					->filterBySubmissionIds([$submission->getId()])
+					->filterByFileStages([SubmissionFile::SUBMISSION_FILE_DEPENDENT])								
+					->includeDependentFiles()
+                    ->getMany();
+
 				foreach ($assocFiles as $assocFile) {
 					/** @var $assocFile SubmissionFile */
 					if (in_array($assocFile->getData('mimetype'), $this->getSupportedSupplFileTypes())) {
@@ -1027,9 +1043,7 @@ class JatsParserPlugin extends GenericPlugin {
 							$fileManager->getBasePath() . DIRECTORY_SEPARATOR . $assocFile->getData('path'),
 							$submissionDir . '/' . uniqid() . '.' . $fileManager->parseFileExtension($assocFile->getData('path'))
 						);
-
-						$assocSubmissionFile = $submissionFileDao->newDataObject();
-						$assocSubmissionFile->setAllData([
+						$assocSubmissionFile = Repo::submissionFile()->newDataObject([
 							'fileId' => $newAssocFileId,
 							'assocId' => $newSubmissionFile->getId(),
 							'assocType' => ASSOC_TYPE_SUBMISSION_FILE,
@@ -1043,7 +1057,7 @@ class JatsParserPlugin extends GenericPlugin {
                             'credit' => $assocFile->getData('credit'),
                             'terms' =>$assocFile->getData('terms'),
 						]);
-						Services::get('submissionFile')->add($assocSubmissionFile, $request);
+						Repo::submissionFile()->add($assocSubmissionFile);
 					}
 				}
 
@@ -1051,7 +1065,6 @@ class JatsParserPlugin extends GenericPlugin {
 				$htmlString = $htmlDocument->saveAsHTML();
 				$publication->setData('jatsParser::fullTextFileId', $newSubmissionFile->getId(), $galleyLocale);
 				$publication->setData('jatsParser::fullText', $htmlString, $galleyLocale);
-				$publicationDao->updateObject($publication);
 			}
 		}
 	}
@@ -1076,18 +1089,20 @@ class JatsParserPlugin extends GenericPlugin {
 
 		if (!$publicationId) return;
 
-		$publication = Services::get('publication')->get($publicationId);
+		$publication = Repo::publication()->get($publicationId);
 		if (!$publication) return;
 
-		$submissionFileIds = array_unique($publication->getData('jatsParser::fullTextFileId'));
+		$fullTextFileIdData = $publication->getData('jatsParser::fullTextFileId');
+		if ($fullTextFileIdData === null) {
+			$fullTextFileIdData = [];
+		}
+		$submissionFileIds = array_unique($fullTextFileIdData);
+		
 		if (empty($submissionFileIds)) return;
-
-		$submissionFileDao = DAORegistry::getDAO('SubmissionFileDAO');
-
 		$submissionFiles = [];
 		foreach ($submissionFileIds as $submissionFileId) {
 			// Check if file ID is valid and object can be returned
-			if ($submissionFile = $submissionFileDao->getById($submissionFileId)) {
+			if ($submissionFile = Repo::submissionFile()->get($submissionFileId)) {
 				$submissionFiles[] = $submissionFile;
 			}
 		}

@@ -29,7 +29,7 @@ msgstr "JATS Parser Settings"
 msgid "plugins.generic.jatsParser.settings.description"
 msgstr "JATSParser plugin settings menu"
 
-msgid "plugins.generic.jatsParser.settings.covert.pdf"
+msgid "plugins.generic.jatsParser.settings.convert.pdf"
 msgstr "Activate JATS XML to PDF conversion"
 
 msgid "plugins.generic.jatsParser.galley.import"
@@ -44,7 +44,7 @@ msgstr "Import full-text from galleys"
 msgid "plugins.generic.jatsParser.publication.jats.fulltext"
 msgstr "Full Text"
 
-msgid "plugins.generic.jatsParser.publication.jats.fulltext"
+msgid "plugins.generic.jatsParser.publication.jats.dates"
 msgstr "Dates"
 
 msgid "plugins.generic.jatsParser.publication.jats.fulltext.success"
