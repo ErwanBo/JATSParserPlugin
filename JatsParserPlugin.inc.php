@@ -796,7 +796,7 @@ class JatsParserPlugin extends GenericPlugin {
 			$submissionFileId = $publication->getData('jatsParser::fullTextFileId', $currentLocale);
 			$submissionFile = Repo::submissionFile()->get($submissionFileId);
 		} else {
-			$locales = $this->getSupportedFormLocales($context);
+			$locales = $context->getSupportedFormLocales($context);
 			$msg = __('plugins.generic.jatsParser.article.fulltext.availableLocale');
 			if (count($fullTexts) > 1) {
 				$msg = __('plugins.generic.jatsParser.article.fulltext.availableLocales');
