@@ -11,6 +11,8 @@ declare(strict_types=1);
 
 namespace Seboettg\Collection\ArrayList;
 
+use function Seboettg\Collection\ArrayList\strval;
+
 /**
  * Trait ArrayListTrait
  * @package Seboettg\Collection
@@ -37,7 +39,7 @@ trait ArrayListTrait
      */
     public function get($key)
     {
-        return isset($this->array[$key]) ? $this->array[$key] : null;
+        return $this->array[$key] ?? null;
     }
 
     /**
@@ -127,7 +129,7 @@ trait ArrayListTrait
      */
     public function hasElement($value): bool
     {
-        $result = array_search($value, $this->array, true);
+        $result = in_array($value, $this->array, true);
         return ($result !== false);
     }
 
@@ -178,7 +180,7 @@ trait ArrayListTrait
      */
     public function filter(callable $filterFunction): ArrayListInterface
     {
-        $newInstance = new self();
+        $newInstance = new static();
         $newInstance->setArray(array_filter($this->array, $filterFunction));
         return $newInstance;
     }
@@ -203,15 +205,15 @@ trait ArrayListTrait
     }
 
     /**
-     * returns a clone of this ArrayList, filtered by the given array keys
+     * returns a new ArrayList, elements are filtered by the given array keys
      * @param array $keys
      * @return ArrayListInterface|ArrayListTrait
      */
     public function filterByKeys(array $keys): ArrayListInterface
     {
-        $newInstance = new self();
+        $newInstance = new static();
         $newInstance->setArray(array_filter($this->array, function ($key) use ($keys) {
-            return array_search($key, $keys) !== false;
+            return in_array($key, $keys);
         }, ARRAY_FILTER_USE_KEY));
         return $newInstance;
     }
@@ -223,8 +225,22 @@ trait ArrayListTrait
      */
     public function map(callable $mapFunction): ArrayListInterface
     {
-        $newInstance = new self();
+        $newInstance = new static();
         $newInstance->setArray(array_map($mapFunction, $this->array));
+        return $newInstance;
+    }
+
+    /**
+     * @inheritDoc
+     * @param callable $mapFunction
+     * @return ArrayListInterface|ArrayListTrait
+     */
+    public function mapNotNull(callable $mapFunction): ArrayListInterface
+    {
+        $newInstance = new static();
+        $newInstance->setArray(array_values(array_filter(array_map($mapFunction, $this->array), function ($item) {
+            return $item !== null;
+        })));
         return $newInstance;
     }
 
@@ -238,7 +254,7 @@ trait ArrayListTrait
         array_walk_recursive($this->array, function ($item) use (&$flattenedArray) {
             $flattenedArray[] = $item;
         });
-        $newInstance = new self();
+        $newInstance = new static();
         $newInstance->setArray($flattenedArray);
         return $newInstance;
     }
@@ -251,4 +267,36 @@ trait ArrayListTrait
     {
         $this->array = array_merge($this->array, $list->toArray());
     }
+
+    /**
+     * @inheritDoc
+     * @param callable $collectFunction
+     * @return mixed
+     */
+    public function collect(callable $collectFunction)
+    {
+        return $collectFunction($this->array);
+    }
+
+    /**
+     * @inheritDoc
+     * @param string $delimiter
+     * @return string
+     */
+    public function collectToString(string $delimiter): string
+    {
+        return implode($delimiter, $this->map(function ($item) {
+            if (is_scalar($item)) {
+                return strval($item);
+            } else if (is_object($item)) {
+                if (method_exists($item, "toString")) {
+                    return $item->toString();
+                }
+            }
+            throw new NotConvertibleToStringException(
+                "Couldn't collectToString since any object in list contains objects which are not " .
+                "convertible to string.");
+        })->toArray());
+    }
 }
+
