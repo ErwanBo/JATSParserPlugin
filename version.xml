@@ -12,7 +12,7 @@
 <version>
     <application>jatsParser</application>
     <type>plugins.generic</type>
-    <release>2.1.9.3</release>
+    <release>3.4.0.0</release>
     <date>2021-03-11</date>
     <lazy-load>1</lazy-load>
     <class>JatsParserPlugin</class>

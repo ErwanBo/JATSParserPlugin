@@ -29,6 +29,13 @@ class Document extends \DOMDocument {
 
 		$articleSections = $this->jatsDocument->getArticleSections();
 		$this->extractContent($articleSections);
+		$this->setFootnotes();
+	}
+
+	public function setFootnotes(): void {
+		if (!empty($this->jatsDocument->getFootnotes())) {
+			$this->extractFootnotes($this->jatsDocument->getFootnotes());
+		}
 	}
 
 	/**
@@ -137,7 +144,6 @@ class Document extends \DOMDocument {
 		}
 
 		foreach ($articleSections as $articleSection) {
-
 			switch (get_class($articleSection)) {
 				case "JATSParser\Body\Par":
 					$par = new Par();
@@ -201,6 +207,42 @@ class Document extends \DOMDocument {
 			}
 		}
 	}
+
+
+	protected function extractFootnotes(): void {
+		if (empty($this->jatsDocument->getFootnotes())) {
+			return;
+		}
+	
+		$footnotesHeading = $this->createElement("h2");
+		$footnotesHeading->setAttribute("class", "footnotes-section-title");
+		$footnotesHeading->nodeValue = "Notes";
+		$this->appendChild($footnotesHeading);
+	
+		$listEl = $this->createElement('div');
+		$listEl->setAttribute('class', 'notes');
+		$this->appendChild($listEl);
+
+		foreach ($this->jatsDocument->getFootnotes() as $fnId => $footnoteData) {
+			$fnListItem = $this->createElement('div');
+			$fnListItem->setAttribute('class', 'note');
+			$fnListItem->setAttribute('id', $fnId);
+	
+			$footnoteLink = $this->createElement('a');
+			$footnoteLink->setAttribute('class', 'noteNum');
+			$footnoteLink->setAttribute('href', "#".$fnId."_return");
+			$footnoteLink->appendChild($this->createTextNode($footnoteData['label']."."));
+			$fnListItem->appendChild($footnoteLink);
+	
+			$fragment = $this->createDocumentFragment();
+
+			$fragment->appendXML($footnoteData['content']);
+			$fnListItem->appendChild($fragment);
+			
+			$listEl->appendChild($fnListItem);
+		}
+	}
+
 
 	protected function extractReferences (array $references): void {
 
@@ -361,7 +403,6 @@ class Document extends \DOMDocument {
 	 */
 	public function getRawReferences(): array {
 		$references = [];
-
 		$refListEl = null;
 
 		// DOMDocument::getElementById or xpath analog won't work presumably because the absence of a root element

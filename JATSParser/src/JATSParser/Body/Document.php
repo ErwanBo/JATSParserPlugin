@@ -20,6 +20,9 @@ class Document {
 	/* var $articleSections array */
 	private $articleContent = array();
 
+	/* var $footnotes array of article's Footnotes */
+	private $footnotes  = array();
+
 	/* var $references array of article's References */
 	private $references = array();
 
@@ -30,6 +33,7 @@ class Document {
 		self::$xpath = new \DOMXPath($document);
 
 		$this->extractContent();
+		$this->extractFootnotes();
 		$this->extractReferences();
 	}
 
@@ -45,8 +49,32 @@ class Document {
 		return $this->articleContent;
 	}
 
+	public function getFootnotes() : array {
+		return $this->footnotes;
+	}
+
 	public function getReferences() : array {
 		return $this->references;
+	}
+
+	private function extractFootnotes() {
+		$footnotes = array();
+		foreach (self::$xpath->evaluate("/article/back/fn-group/fn") as $fnElement) {
+			$id = $fnElement->getAttribute('id');
+			$footnote = array('label' => '', 'content' => '');
+
+			$labelNode = self::$xpath->evaluate("label", $fnElement)->item(0);
+			if ($labelNode)
+				$footnote['label'] = $labelNode->textContent;
+
+			$content = '';
+			foreach (self::$xpath->evaluate("p", $fnElement) as $pNode)
+				$content .= self::$xpath->document->saveXML($pNode);
+			$footnote['content'] = $content;
+
+			$footnotes[$id] = $footnote;
+		}
+		$this->footnotes = $footnotes;
 	}
 
 	/* @brief Constructor for references

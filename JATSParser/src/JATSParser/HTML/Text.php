@@ -17,7 +17,6 @@ class Text {
 			$domElement->appendChild($textNode);
 			unset($nodeTypes);
 		}
-
 		// Renaming text properties into standard HTML node element
 		$typeArray = array();
 		if (isset($nodeTypes)) {
@@ -40,28 +39,40 @@ class Text {
 						break;
 					case is_array($nodeType):
 						foreach ($nodeType as $elementName => $elementAttrs) {
-							if ($elementName === "xref") {
-								$newArray = array();
-								foreach ($elementAttrs as $attrKey => $attrValue) {
-									if ($attrKey === "rid") {
-										$newArray ["href"] = "#" . $attrValue;
-									} elseif ($attrKey === "ref-type") {
-										$newArray ["class"] = $attrValue;
-									} else {
-										$newArray[$attrKey] = $attrValue;
+							if ($elementName === "xref" && $elementAttrs['ref-type'] === 'fn') {
+								$linkElement = $domDocument->createElement("a");
+								$linkElement->setAttribute("href", "#" . $elementAttrs['rid']);
+								$linkElement->setAttribute("class", "footnote-ref");
+								$linkElement->setAttribute("name", $elementAttrs['rid']."_return");
+								$supElement = $domDocument->createElement("sup");
+								$footnotesMark = $domDocument->createTextNode($jatsText->getContent());
+								$supElement->appendChild($footnotesMark);
+								$linkElement->appendChild($supElement);
+								$domElement->appendChild($linkElement);
+							} else {
+								if ($elementName === "xref") {
+									$newArray = array();
+									foreach ($elementAttrs as $attrKey => $attrValue) {
+										if ($attrKey === "rid") {
+											$newArray ["href"] = "#" . $attrValue;
+										} elseif ($attrKey === "ref-type") {
+											$newArray ["class"] = $attrValue;
+										} else {
+											$newArray[$attrKey] = $attrValue;
+										}
 									}
-								}
-								$typeArray[]["a"] = $newArray;
-							} else if ($elementName = "ext-link") {
-								$newArray = array();
-								foreach ($elementAttrs as $attrKey => $attrValue) {
-									if ($attrKey === "xlink:href") {
-										$newArray["href"] = $attrValue;
-									} else if ($attrKey = "ext-link-type") {
-										$newArray["class"] = "JATSParser__link-" . $attrValue;
+									$typeArray[]["a"] = $newArray;
+								} else if ($elementName === "ext-link") {
+									$newArray = array();
+									foreach ($elementAttrs as $attrKey => $attrValue) {
+										if ($attrKey === "xlink:href") {
+											$newArray["href"] = $attrValue;
+										} else if ($attrKey === "ext-link-type") {
+											$newArray["class"] = "JATSParser__link-" . $attrValue;
+										}
 									}
+									$typeArray[]["a"] = $newArray;
 								}
-								$typeArray[]["a"] = $newArray;
 							}
 						}
 						break;

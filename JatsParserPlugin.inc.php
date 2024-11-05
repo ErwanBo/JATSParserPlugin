@@ -449,6 +449,7 @@ class JatsParserPlugin extends GenericPlugin {
 		$citationStyle = $this->getCitationStyle($context);
 
 		$lang = str_replace('_', '-', $submissionFile->getSubmissionLocale());
+		$htmlDocument->setFootnotes();
 		$htmlDocument->setReferences($citationStyle, $lang, false);
 
 		$this->_importCitations($htmlDocument, $newPublication);
@@ -472,8 +473,6 @@ class JatsParserPlugin extends GenericPlugin {
 
 		$submissionFile = Repo::submissionFile()->get($fileId);
 		$datesDocument = $this->getDatesFromJats($submissionFile);
-		error_log("===========================");
-		error_log(var_export($datesDocument,true));
 		$request = $this->getRequest();
 		$context = $request->getContext();
 
@@ -483,12 +482,7 @@ class JatsParserPlugin extends GenericPlugin {
 		$params = [
 			'date_submitted' => $datesDocument['received'],
 		];
-		error_log("-0-");
-		error_log(var_export($submissionFile->getAllData(),true));
-		error_log("-1-");
-		error_log(var_export($submission->getAllData(),true));
 		Repo::submission()->edit($submission, $params);
-		error_log(var_export($submission->getAllData(),true));
 		
 		// Update decision date
 		$editorDecisions = Repo::decision()->getCollector()
@@ -498,10 +492,7 @@ class JatsParserPlugin extends GenericPlugin {
 
 		if (!empty($editorDecisions) && array_key_exists('accepted', $datesDocument)) {
 			$editorDecision = $editorDecisions->first();
-			error_log("-2-");
-			error_log(var_export($editorDecision->getAllData(),true));
 			$editorDecision->setData('dateDecided', $datesDocument['accepted']);
-			error_log(var_export($editorDecision->getAllData(),true));
 			
 		}
 
@@ -510,12 +501,7 @@ class JatsParserPlugin extends GenericPlugin {
 		$params = [
 			'date_published' => $datesDocument['pub'],
 		];
-		error_log("-3-");
-		error_log(var_export($newPublication->getAllData(),true));
 		Repo::publication()->edit($newPublication, $params);
-		error_log(var_export($newPublication->getAllData(),true));
-
-		error_log("===========================");
 		return false;
 	}
 
